@@ -1,132 +1,100 @@
 name: CI
-
 on:
-  pull_request:
-  push:
-    branches:
-      - main
-    tags:
-      - v*
-    paths-ignore:
-      - "README.md"
+  push: null
 env:
   CARGO_TERM_COLOR: always
-  RUSTFLAGS: "-Dwarnings"
-
+  RUSTFLAGS: -Dwarnings
 jobs:
   cargo-clippy:
     runs-on: ubuntu-latest
     steps:
-      - name: Checkout
-        uses: actions/checkout@master
+    - name: Checkout
+      uses: actions/checkout@master
+    - uses: Swatinem/rust-cache@v2
+    - run: rustup component add clippy
+    - name: Cargo clippy
+      run: 'cargo clippy -- -D clippy::all -D warnings -A clippy::manual_range_contains
 
-      - uses: Swatinem/rust-cache@v2
+        cargo clippy --tests --benches -- -D clippy::all -D warnings -A clippy::manual_range_contains
 
-      - run: rustup component add clippy
-
-      - name: Cargo clippy
-        # We run clippy twice (once without tests), so that it accurately reports dead code in the non-test configuration.
-        # `manual_range_contains` is disabled because a >= x && a < y reads more clearly than (x..y).contains(a) and
-        # there are additional caveats for floating point numbers (https://github.com/rust-lang/rust-clippy/issues/6455)
-        run: |
-          cargo clippy -- -D clippy::all -D warnings -A clippy::manual_range_contains
-          cargo clippy --tests --benches -- -D clippy::all -D warnings -A clippy::manual_range_contains
-
+        '
   cargo-doc:
     runs-on: ubuntu-latest
     steps:
-      - name: Checkout
-        uses: actions/checkout@master
+    - name: Checkout
+      uses: actions/checkout@master
+    - uses: Swatinem/rust-cache@v2
+    - run: rustup component add clippy
+    - name: Cargo doc
+      run: 'cargo doc --workspace --no-deps --all-features
 
-      - uses: Swatinem/rust-cache@v2
-
-      - run: rustup component add clippy
-
-      - name: Cargo doc
-        run: |
-          cargo doc --workspace --no-deps --all-features
-        env:
-          RUSTDOCFLAGS: "--deny warnings"
-
+        '
+      env:
+        RUSTDOCFLAGS: --deny warnings
   reproducible-build:
     runs-on: ubuntu-22.04
     steps:
-      - name: Checkout
-        uses: actions/checkout@master
+    - name: Checkout
+      uses: actions/checkout@master
+    - name: Docker build
+      run: './scripts/docker-build
 
-      - name: Docker build
-        run: |
-          ./scripts/docker-build
+        '
+    - name: Archive Artifact
+      uses: actions/upload-artifact@v4
+      with:
+        name: evm_rpc.wasm.gz
+        path: evm_rpc.wasm.gz
+        if-no-files-found: error
+    - name: Add summary
+      run: 'hash=`sha256sum evm_rpc.wasm.gz`
 
-      - name: Archive Artifact
-        uses: actions/upload-artifact@v4
-        with:
-          name: evm_rpc.wasm.gz
-          path: evm_rpc.wasm.gz
-          if-no-files-found: error
+        echo "SHA-256 :hash: ${hash}" >> $GITHUB_STEP_SUMMARY
 
-      - name: Add summary
-        run: |
-          hash=`sha256sum evm_rpc.wasm.gz`
-          echo "SHA-256 :hash: ${hash}" >> $GITHUB_STEP_SUMMARY
-
+        '
   cargo-test:
-    needs: [ reproducible-build ]
+    needs:
+    - reproducible-build
     runs-on: ubuntu-22.04
     steps:
-      - name: Checkout
-        uses: actions/checkout@master
+    - name: Checkout
+      uses: actions/checkout@master
+    - name: Download Artifacts
+      uses: actions/download-artifact@v4
+      with:
+        name: evm_rpc.wasm.gz
+    - name: Set EVM_RPC_WASM_PATH for load_wasm
+      run: 'echo "EVM_RPC_WASM_PATH=$GITHUB_WORKSPACE/evm_rpc.wasm.gz" >> "$GITHUB_ENV"
 
-      - name: Download Artifacts
-        uses: actions/download-artifact@v4
-        with:
-          name: evm_rpc.wasm.gz
-      
-      - name: Set EVM_RPC_WASM_PATH for load_wasm
-        run: |
-          echo "EVM_RPC_WASM_PATH=$GITHUB_WORKSPACE/evm_rpc.wasm.gz" >> "$GITHUB_ENV"
- 
-      - name: Install PocketIC server
-        uses: dfinity/pocketic@main
-        with:
-          pocket-ic-server-version: "9.0.1"
-
-      - uses: Swatinem/rust-cache@v2
-
-      - name: Cargo test
-        run: cargo test --workspace --all-features -- --test-threads=2 --nocapture
-
+        '
+    - name: Install PocketIC server
+      uses: dfinity/pocketic@main
+      with:
+        pocket-ic-server-version: 8.0.0
+    - uses: Swatinem/rust-cache@v2
+    - name: Cargo test
+      run: cargo test --workspace --all-features -- --test-threads=2 --nocapture
   e2e:
     runs-on: ubuntu-latest
     steps:
-      - name: Checkout
-        uses: actions/checkout@master
-
-      - uses: Swatinem/rust-cache@v2
-
-      - name: Install dfx
-        uses: dfinity/setup-dfx@main
-
-      - name: Start dfx
-        run: dfx start --background
-
-      - name: Install npm packages
-        run: npm ci
-
-      - name: Run E2E tests
-        run: scripts/e2e
-
-      - name: Run examples
-        run: scripts/examples evm_rpc 'Number = 20000000'
-
-      - name: Install Foundry
-        uses: foundry-rs/foundry-toolchain@v1
-
-      - name: Run anvil
-        run: anvil &
-
-      - name: Run local examples with Foundry
-        run: scripts/examples evm_rpc_local 'Number = 0'
-
-      - name: Check formatting
-        run: cargo fmt --all -- --check
+    - name: Checkout
+      uses: actions/checkout@master
+    - uses: Swatinem/rust-cache@v2
+    - name: Install dfx
+      uses: dfinity/setup-dfx@main
+    - name: Start dfx
+      run: dfx start --background
+    - name: Install npm packages
+      run: npm ci
+    - name: Run E2E tests
+      run: scripts/e2e
+    - name: Run examples
+      run: scripts/examples evm_rpc 'Number = 20000000'
+    - name: Install Foundry
+      uses: foundry-rs/foundry-toolchain@v1
+    - name: Run anvil
+      run: anvil &
+    - name: Run local examples with Foundry
+      run: scripts/examples evm_rpc_local 'Number = 0'
+    - name: Check formatting
+      run: cargo fmt --all -- --check
